@@ -1,0 +1,29 @@
+{
+  "version": "2.0.0",
+  "echoCommand": false,
+  "type": "process",
+  "presentation": {},
+  "tasks": [
+    {
+      "label": "typecheck-current",
+      "command": "craft-py-check",
+      "args": ["${relativeFile}"],
+      "group": {"kind": "build", "isDefault": true},
+      "problemMatcher": "$craft"
+    },
+    {
+      "label": "typecheck",
+      "command": "craft-py-check",
+      "args": ["pithy"],
+      "group": "build",
+      "problemMatcher": "$craft"
+    },
+    {
+      "label": "test and typecheck",
+      "command": "make",
+      "args": [],
+      "group": {"kind": "test", "isDefault": true},
+      "problemMatcher": "$craft"
+    }
+  ]
+}
