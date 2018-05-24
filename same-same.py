@@ -1,16 +1,34 @@
 #!/usr/bin/env python3
 
 import re
+from argparse import ArgumentParser
 from os import environ
 from sys import stderr, stdout
 from typing import *
 from typing import Match
+from dataclasses import dataclass # type: ignore
 
 
-DiffLine = Tuple[Match, str] # (match, rich_text).
+@dataclass
+class DiffLine:
+  kind: str
+  match: Match
+  rich_text: str
+  old_num: int = -1
+  new_num: int = -1
+  text: str = ''
+
+  @property
+  def plain_text(self) -> str:
+    return self.match.string # type: ignore
 
 
 def main() -> None:
+
+  arg_parser = ArgumentParser(prog='same-same', description='Git diff filter.')
+  arg_parser.add_argument('-interactive', action='store_true', help="Accommodate git's interactive mode.")
+  args = arg_parser.parse_args()
+
   # Git can generate utf8-illegal sequences; ignore them.
   stdin = open(0, errors='replace')
 
@@ -19,121 +37,104 @@ def main() -> None:
       stdout.write(line)
     exit(0)
 
+  dbg = ('SAME_SAME_DBG' in environ)
+
   buffer:List[DiffLine] = []
+  path = '<PATH>'
 
   def flush_buffer() -> None:
     nonlocal buffer
     if buffer:
-      handle_file_lines(buffer)
+      handle_file_lines(buffer, path=path, interactive=args.interactive)
       buffer = []
 
   try:
     for rich_text in stdin:
       rich_text = rich_text.rstrip('\n')
-      text = sgr_pat.sub('', rich_text) # remove colors.
-      m = diff_pat.match(text)
-      assert m is not None
-      kind = get_kind(m)
-      if kind == 'diff': flush_buffer()
-      buffer.append((m, rich_text))
+      plain_text = sgr_pat.sub('', rich_text) # remove colors.
+      match = diff_pat.match(plain_text)
+      assert match is not None
+      kind = match.lastgroup
+      assert kind is not None, match
+      if dbg:
+        print(kind, ':', repr(plain_text))
+        continue
+      if kind == 'diff':
+        flush_buffer()
+        path = match['diff_b']
+        if '/' not in path:
+          path = './' + path
+        assert path is not None
+      buffer.append(DiffLine(kind, match, rich_text)) # type: ignore
     flush_buffer()
   except BrokenPipeError:
     stderr.close() # Prevents warning message.
 
 
-def handle_file_lines(lines:List[DiffLine]) -> None:
-  match, rich_text = lines[0]
-  kind = get_kind(match)
-  text = match.string
+def handle_file_lines(lines:List[DiffLine], path:str, interactive:bool) -> None:
+  first = lines[0]
+  kind = first.kind
   skip = False
-  if kind != 'diff': skip = True
-  elif graph_pat.match(text).end(): skip = True # type: ignore
+  if kind not in ('diff', 'loc'): skip = True
+  elif graph_pat.match(first.plain_text).end(): skip = True # type: ignore
 
   if skip:
-    for _, rich_text in lines: print(rich_text)
+    for line in lines: print(line.rich_text)
     return
 
   old_ctx_nums:Set[int] = set() # Line numbers of context lines.
   new_ctx_nums:Set[int] = set() # ".
-  old_texts:Dict[int, str] = {} # Maps of line numbers to text.
-  new_texts:Dict[int, str] = {} # ".
+  old_lines:Dict[int, DiffLine] = {} # Maps of line numbers to line structs.
+  new_lines:Dict[int, DiffLine] = {} # ".
   old_uniques:Dict[str, Optional[int]] = {} # Maps unique line bodies to line numbers.
   new_uniques:Dict[str, Optional[int]] = {} # ".
   #moved_pairs = {} # new to old indices.
-  old_path = '<OLD_PATH>'
-  new_path = '<NEW_PATH>'
-  old_num = 0 # 1-indexed.
-  new_num = 0 # 1-indexed.
-  nums:List[Tuple[Optional[int], Optional[int]]] = [] # ordered (old, new) pairs.
+  old_num = 0 # 1-indexed source line number.
+  new_num = 0 # ".
+  chunk_idx = 0
 
-  def append_texts(old_text:Optional[str], new_text:Optional[str]) -> None:
-    nonlocal old_num, new_num
-    o_i = None
-    n_i = None
-    assert old_text is not None or new_text is not None
-    if old_text is not None:
-      assert old_num not in old_texts
-      o_i = old_num
-      old_num += 1
-      old_texts[o_i] = old_text
-    if new_text is not None:
-      assert new_num not in new_texts
-      n_i = new_num
-      new_num += 1
-      new_texts[n_i] = new_text
-    nums.append((o_i, n_i))
-
-  # Accumulate lines into structures.
-  for match, rich_text in lines:
-    kind = get_kind(match)
+  # Accumulate source lines into structures.
+  for line in lines:
+    match = line.match
+    kind = line.kind
     if kind == 'ctx':
-      assert old_num not in old_ctx_nums
-      old_ctx_nums.add(old_num)
-      assert new_num not in new_ctx_nums
-      new_ctx_nums.add(new_num)
-      t = match['ctx_text']
-      append_texts(t, t)
+      line.text = match['ctx_text']
     elif kind == 'rem':
-      t = match['rem_text']
-      insert_unique_line(old_uniques, t, old_num)
-      append_texts(t, None)
+      line.text = match['rem_text']
+      insert_unique_line(old_uniques, line.text, old_num)
     elif kind == 'add':
-      t = match['add_text']
-      insert_unique_line(new_uniques, t, new_num)
-      append_texts(None, t)
+      line.text = match['add_text']
+      insert_unique_line(new_uniques, line.text, new_num)
     elif kind == 'loc':
       o = int(match['old_num'])
       if o > 0:
         assert o > old_num, (o, old_num, match.string)
         old_num = o
-        #old_last = old_num + int(match['old_len']) - 1
       n = int(match['new_num'])
       if n > 0:
         assert n > new_num
         new_num = n
-        #new_last = new_num + int(match['new_len']) - 1
-      #hunk_header = match['hunk_header']
-    elif kind == 'diff':
-      old_path = match['diff_a']
-      new_path = match['diff_b']
-      if old_path != new_path:
-        print(f'{C_RENAME}{old_path} -> {new_path}{RST}')
-    elif kind == 'meta':
-      print(f'{C_MODE}{new_path}:{RST} {rich_text}')
-    elif kind in dropped_kinds:
       continue
-    elif kind in pass_kinds:
-      print(rich_text)
-    elif kind == 'unknown':
-      print(f'{C_UNKNOWN}{kind.upper()}:{RST} {rich_text!r}')
-    else:
-      raise Exception(f'unhandled kind: {kind}\n{text!r}')
+    if kind in ('ctx', 'rem'):
+      assert old_num not in old_lines
+      assert old_num not in old_ctx_nums
+      line.old_num = old_num
+      old_lines[old_num] = line
+      old_ctx_nums.add(old_num)
+      old_num += 1
+    if kind in ('ctx', 'add'):
+      assert new_num not in new_lines
+      assert new_num not in new_ctx_nums
+      line.new_num = new_num
+      new_lines[new_num] = line
+      new_ctx_nums.add(new_num)
+      new_num += 1
 
   # Detect moved lines.
 
-  def diff_lines_match(old_idx, new_idx) -> bool:
+  def diff_lines_match(old_idx:int, new_idx:int) -> bool:
     if old_idx in old_ctx_nums or new_idx in new_ctx_nums: return False
-    try: return old_texts[old_idx].strip() == new_texts[new_idx].strip()
+    try: return old_lines[old_idx].text.strip() == new_lines[new_idx].text.strip()
     except KeyError: return False
 
   old_moved_nums:Set[int] = set()
@@ -156,25 +157,43 @@ def handle_file_lines(lines:List[DiffLine]) -> None:
     new_moved_nums.update(range(p_n, e_n))
 
   # Print lines.
-  o_prev = -1
-  n_prev = -1
-  for o_i, n_i, in nums:
-    if o_prev+1 != o_i and n_prev+1 != n_i: # new hunk.
-      print(f'{C_LOC}{new_path}:{n_i}:{RST}')
-    if o_i: o_prev = o_i
-    if n_i: n_prev = n_i
-    if n_i is None: # rem line.
-      assert o_i is not None
-      t = old_texts[o_i]
-      c = C_REM_WS if t.isspace() else (C_REM_MOVED if o_i in old_moved_nums else C_REM)
-      print(f'{c}{t}{RST}')
-    elif o_i is None: # add line.
-      t = new_texts[n_i]
-      c = C_ADD_WS if t.isspace() else (C_ADD_MOVED if n_i in new_moved_nums else C_ADD)
-      print(f'{c}{t}{RST}')
-    else: # ctx line.
-      t = new_texts[n_i]
-      print(f'{t}')
+  for line in lines:
+    kind = line.kind
+    match = line.match
+    text = line.text
+    if kind == 'ctx':
+      print(text)
+    elif kind == 'rem':
+      c = C_REM
+      if not text: c = C_REM_WS + ERASE_LINE_F
+      elif text.isspace(): c = C_REM_WS
+      elif line.old_num in old_moved_nums: c = C_REM_MOVED
+      print(f'{c}{text}{RST}')
+    elif kind == 'add':
+      c = C_ADD
+      if not text: c = C_ADD_WS + ERASE_LINE_F
+      elif text.isspace(): c = C_ADD_WS
+      elif line.new_num in new_moved_nums: c = C_ADD_MOVED
+      print(f'{c}{text}{RST}')
+    elif kind == 'loc':
+      new_num = match['new_num']
+      hunk_header = match['hunk_header']
+      s = f'{RST} {C_HEADER}' if hunk_header else ''
+      print(f'{C_LOC}{path}:{new_num}:{s}{hunk_header}{RST}')
+    elif kind == 'diff':
+      old_path = match['diff_a']
+      new_path = match['diff_b']
+      msg = new_path if (old_path == new_path) else f'{old_path} -> {new_path}'
+      print(f'{C_FILE}{msg}{ERASE_LINE_F}{RST}')
+    elif kind == 'meta':
+      print(f'{C_MODE}{path}:{RST} {line.rich_text}')
+    elif kind in dropped_kinds:
+      if interactive: # cannot drop lines, becasue interactive mode slices the diff by line counts.
+        print(f'{C_DROPPED}{line.plain_text}{RST}')
+    elif kind in pass_kinds:
+      print(line.rich_text)
+    else:
+      raise Exception(f'unhandled kind: {kind}\n{text!r}')
 
 
 def insert_unique_line(d:Dict[str, Optional[int]], line:str, idx:int) -> None:
@@ -183,18 +202,12 @@ def insert_unique_line(d:Dict[str, Optional[int]], line:str, idx:int) -> None:
   else: d[body] = idx
 
 
-def get_kind(match:Match) -> str:
-  kind:Optional[str] = match.lastgroup
-  assert kind is not None, match
-  return kind
-
-
 dropped_kinds = {
   'idx', 'old', 'new'
 }
 
 pass_kinds = {
-  'empty',
+  'empty', 'other'
 }
 
 
@@ -227,7 +240,7 @@ diff_re = r'''(?x)
   | rename\ to
   | similarity\ index
   | dissimilarity\ index ) )
-| (?P<unknown> .* )
+| (?P<other> .* )
 )
 '''
 
@@ -235,7 +248,7 @@ diff_pat = re.compile(diff_re)
 
 
 # ANSI control sequence indicator.
-CSI = '\x1B['
+CSI = '\x1b['
 
 def sgr(*codes:Any) -> str:
   'Select Graphic Rendition control sequence string.'
@@ -260,12 +273,12 @@ W = 231 # white.
 
 # Grayscale: the 24 palette values have a suggested 8 bit grayscale range of [8, 238].
 middle_gray_indices = range(232, 256)
-K1, K2, K3, K4, K5, K6, K7, K8, K9, KA, KB, KC, \
-WC, WB, WA, W9, W8, W7, W6, W5, W4, W3, W2, W1, \
-= middle_gray_indices
 
-gray_indices = (K, *middle_gray_indices, W) # Include black and white.
-
+def gray26(n:int) -> int:
+  assert 0 <= n < 26
+  if n == 0: return K
+  if n == 25: return W
+  return W + n
 
 def rgb6(r:int, g:int, b:int) -> int:
   'index RGB triples into the 256-color palette (returns 16 for black, 231 for white).'
@@ -277,7 +290,7 @@ def rgb6(r:int, g:int, b:int) -> int:
 
 # same-same colors.
 
-C_RENAME = sgr(BG, rgb6(0, 2, 1))
+C_FILE = sgr(BG, rgb6(1, 0, 1))
 C_MODE = sgr(BG, rgb6(0, 3, 4))
 C_UNKNOWN = sgr(BG, rgb6(5, 0, 5))
 C_LOC = sgr(BG, rgb6(0, 1, 2))
@@ -288,6 +301,14 @@ C_REM_WS = sgr(BG, rgb6(1, 0, 0))
 C_ADD_WS = sgr(BG, rgb6(0, 1, 0))
 C_REM_MOVED = sgr(TXT, rgb6(2, 0, 0))
 C_ADD_MOVED = sgr(TXT, rgb6(0, 2, 0))
+C_HEADER = sgr(TXT, gray26(17), BG, gray26(4))
+C_DROPPED = sgr(TXT, gray26(10))
+
+ERASE_LINE_F = CSI + 'K'
+
+def errL(*items:Any) -> None: print(*items, sep='', file=stderr)
+
+def errSL(*items:Any) -> None: print(*items, file=stderr)
 
 
 if __name__ == '__main__': main()
