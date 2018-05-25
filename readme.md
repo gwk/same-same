@@ -25,9 +25,15 @@ Same-same has been tested only on macOS 10.13 and Apple Terminal.
 
 # Installation
 
-The program is a single-file python script. To install:
+The program is a standalone Python script. To install, just copy it to some location on your shell's PATH, e.g.:
 
     .../same-same $ cp same-same.py /usr/local/bin/same-same
+
+Or you can install the program as a symlink to the source file in the developer directory:
+
+   .../same-same $ ./install-dev.sh
+
+## Configure Git
 
 Then update your git configuration:
 
