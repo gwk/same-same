@@ -2,6 +2,8 @@
 
 import re
 from argparse import ArgumentParser
+from difflib import SequenceMatcher
+from itertools import groupby
 from os import environ
 from sys import stderr, stdout
 from typing import *
@@ -9,13 +11,15 @@ from typing import Match
 from dataclasses import dataclass # type: ignore
 
 
+
 @dataclass
 class DiffLine:
   kind: str
   match: Match
   rich_text: str
-  old_num: int = -1
-  new_num: int = -1
+  old_num: int = 0 # 1-indexed.
+  new_num: int = 0 # ".
+  chunk_idx: int = 0 # Positive indicates rem/add chunk.
   text: str = ''
 
   @property
@@ -94,16 +98,21 @@ def handle_file_lines(lines:List[DiffLine], path:str, interactive:bool) -> None:
   chunk_idx = 0
 
   # Accumulate source lines into structures.
+  is_prev_ctx = False
   for line in lines:
     match = line.match
     kind = line.kind
+    if is_prev_ctx and (kind in ('rem', 'add')): chunk_idx += 1
+    is_prev_ctx = (kind == 'ctx')
     if kind == 'ctx':
       line.text = match['ctx_text']
     elif kind == 'rem':
       line.text = match['rem_text']
+      line.chunk_idx = chunk_idx
       insert_unique_line(old_uniques, line.text, old_num)
     elif kind == 'add':
       line.text = match['add_text']
+      line.chunk_idx = chunk_idx
       insert_unique_line(new_uniques, line.text, new_num)
     elif kind == 'loc':
       o = int(match['old_num'])
@@ -156,50 +165,104 @@ def handle_file_lines(lines:List[DiffLine], path:str, interactive:bool) -> None:
     old_moved_nums.update(range(p_o, e_o))
     new_moved_nums.update(range(p_n, e_n))
 
-  # Print lines.
-  for line in lines:
-    kind = line.kind
-    match = line.match
-    text = line.text
-    if kind == 'ctx':
-      print(text)
-    elif kind == 'rem':
-      c = C_REM
-      if not text: c = C_REM_WS + ERASE_LINE_F
-      elif text.isspace(): c = C_REM_WS
-      elif line.old_num in old_moved_nums: c = C_REM_MOVED
-      print(f'{c}{text}{RST}')
-    elif kind == 'add':
-      c = C_ADD
-      if not text: c = C_ADD_WS + ERASE_LINE_F
-      elif text.isspace(): c = C_ADD_WS
-      elif line.new_num in new_moved_nums: c = C_ADD_MOVED
-      print(f'{c}{text}{RST}')
-    elif kind == 'loc':
-      new_num = match['new_num']
-      hunk_header = match['hunk_header']
-      s = f'{RST} {C_HEADER}' if hunk_header else ''
-      print(f'{C_LOC}{path}:{new_num}:{s}{hunk_header}{RST}')
-    elif kind == 'diff':
-      old_path = match['diff_a']
-      new_path = match['diff_b']
-      msg = new_path if (old_path == new_path) else f'{old_path} -> {new_path}'
-      print(f'{C_FILE}{msg}{ERASE_LINE_F}{RST}')
-    elif kind == 'meta':
-      print(f'{C_MODE}{path}:{RST} {line.rich_text}')
-    elif kind in dropped_kinds:
-      if interactive: # cannot drop lines, becasue interactive mode slices the diff by line counts.
-        print(f'{C_DROPPED}{line.plain_text}{RST}')
-    elif kind in pass_kinds:
-      print(line.rich_text)
-    else:
-      raise Exception(f'unhandled kind: {kind}\n{text!r}')
+  # Break lines into rem/add chunks.
+
+  def chunk_key(line:DiffLine) -> Tuple[int, bool]:
+    return (line.chunk_idx, (line.old_num in old_moved_nums or line.new_num in new_moved_nums))
+
+  for ((chunk_idx, is_moved), _chunk) in groupby(lines, key=chunk_key):
+    # Within a chunk, we can reorder rem/add lines.
+    chunk = list(_chunk)
+    if chunk_idx and not is_moved: # Chunk should be diffed by tokens.
+      # We must ensure that the same number of lines is output.
+      rem_lines = [l for l in chunk if l.old_num]
+      add_lines = [l for l in chunk if l.new_num]
+      add_intraline_diffs(rem_lines, add_lines)
+
+    # Print lines.
+    for line in chunk:
+      kind = line.kind
+      match = line.match
+      text = line.text
+      if kind == 'ctx':
+        print(text)
+      elif kind == 'rem':
+        m = C_REM_MOVED if line.old_num in old_moved_nums else ''
+        print(f'{C_REM_LINE}{m}{text}{C_END}')
+      elif kind == 'add':
+        m = C_ADD_MOVED if line.new_num in new_moved_nums else ''
+        print(f'{C_ADD_LINE}{m}{text}{C_END}')
+      elif kind == 'loc':
+        new_num = match['new_num']
+        hunk_header = match['hunk_header']
+        s = f'{RST} {C_HEADER}' if hunk_header else ''
+        print(f'{C_LOC}{path}:{new_num}:{s}{hunk_header}{RST}')
+      elif kind == 'diff':
+        old_path = match['diff_a']
+        new_path = match['diff_b']
+        msg = new_path if (old_path == new_path) else f'{old_path} -> {new_path}'
+        print(f'{C_FILE}{msg}{ERASE_LINE_F}{RST}')
+      elif kind == 'meta':
+        print(f'{C_MODE}{path}:{RST} {line.rich_text}')
+      elif kind in dropped_kinds:
+        if interactive: # cannot drop lines, becasue interactive mode slices the diff by line counts.
+          print(f'{C_DROPPED}{line.plain_text}{RST}')
+      elif kind in pass_kinds:
+        print(line.rich_text)
+      else:
+        raise Exception(f'unhandled kind: {kind}\n{text!r}')
 
 
 def insert_unique_line(d:Dict[str, Optional[int]], line:str, idx:int) -> None:
   body = line.strip()
   if body in d: d[body] = None
   else: d[body] = idx
+
+
+def add_intraline_diffs(rem_lines:List[DiffLine], add_lines:List[DiffLine]) -> None:
+  r_tokens = tokenize_difflines(rem_lines)
+  a_tokens = tokenize_difflines(add_lines)
+  isjunk = lambda s: s.isspace() and s != '\n'
+  m = SequenceMatcher(isjunk=isjunk, a=r_tokens, b=a_tokens, autojunk=True)
+  r_line_idx = 0
+  a_line_idx = 0
+  r_d = 0 # diff fragment index.
+  a_d = 0
+  r_frags:List[List[str]] = [[] for _ in rem_lines]
+  a_frags:List[List[str]] = [[] for _ in add_lines]
+  # TODO: r_bg_on, a_bg_on toggles to reduce emission of BG sequences.
+  blocks = m.get_matching_blocks() # last block is sentinel: (len(a), len(b), 0).
+  #if len(blocks) == 1: return # no matches; don't highlight.
+  for r_p, a_p, l in m.get_matching_blocks():
+    r_line_idx = append_frags(r_frags, r_tokens, r_line_idx, r_d, r_p, C_REM_TOKEN)
+    a_line_idx = append_frags(a_frags, a_tokens, a_line_idx, a_d, a_p, C_ADD_TOKEN)
+    r_d = r_p+l # update to end of match / beginning of next diff.
+    a_d = a_p+l
+    r_line_idx = append_frags(r_frags, r_tokens, r_line_idx, r_p, r_d, C_RST_TOKEN)
+    a_line_idx = append_frags(a_frags, a_tokens, a_line_idx, a_p, a_d, C_RST_TOKEN)
+  for rem_line, frags in zip(rem_lines, r_frags):
+    rem_line.text = ''.join(frags)
+  for add_line, frags in zip(add_lines, a_frags):
+    add_line.text = ''.join(frags)
+
+
+def append_frags(frags:List[List[str]], tokens:List[str], line_idx:int, pos:int, end:int, highlight:str) -> int:
+  for frag in tokens[pos:end]:
+    if frag == '\n':
+      line_idx += 1
+    else:
+      f = frags[line_idx]
+      f.append(highlight)
+      f.append(frag)
+  return line_idx
+
+
+def tokenize_difflines(lines:List[DiffLine]) -> List[str]:
+  tokens:List[str] = []
+  for i, line in enumerate(lines):
+    if i: tokens.append('\n')
+    tokens.extend(m[0] for m in token_pat.finditer(line.text))
+  return tokens
 
 
 dropped_kinds = {
@@ -247,8 +310,20 @@ diff_re = r'''(?x)
 diff_pat = re.compile(diff_re)
 
 
+token_re = r'''(?x)
+  \w[\w\d]* # symbol token.
+| \d+ # number token.
+| \s+ # tokenize whitespace together to reduce sequence length; treated as junk.
+| . # any single character.
+'''
+
+token_pat = re.compile(token_re)
+
+
 # ANSI control sequence indicator.
 CSI = '\x1b['
+
+ERASE_LINE_F = CSI + 'K' # Sending erase line forward while background color is set colors to end of line.
 
 def sgr(*codes:Any) -> str:
   'Select Graphic Rendition control sequence string.'
@@ -294,17 +369,20 @@ C_FILE = sgr(BG, rgb6(1, 0, 1))
 C_MODE = sgr(BG, rgb6(0, 3, 4))
 C_UNKNOWN = sgr(BG, rgb6(5, 0, 5))
 C_LOC = sgr(BG, rgb6(0, 1, 2))
-
-C_REM = sgr(TXT, rgb6(5, 0, 0))
-C_ADD = sgr(TXT, rgb6(0, 5, 0))
-C_REM_WS = sgr(BG, rgb6(1, 0, 0))
-C_ADD_WS = sgr(BG, rgb6(0, 1, 0))
-C_REM_MOVED = sgr(TXT, rgb6(2, 0, 0))
-C_ADD_MOVED = sgr(TXT, rgb6(0, 2, 0))
 C_HEADER = sgr(TXT, gray26(17), BG, gray26(4))
 C_DROPPED = sgr(TXT, gray26(10))
 
-ERASE_LINE_F = CSI + 'K'
+C_REM_LINE = sgr(BG, rgb6(1, 0, 0))
+C_ADD_LINE = sgr(BG, rgb6(0, 1, 0))
+C_REM_MOVED = sgr(TXT, rgb6(4, 2, 0))
+C_ADD_MOVED = sgr(TXT, rgb6(2, 4, 0))
+C_REM_TOKEN = sgr(TXT, rgb6(5, 2, 2))
+C_ADD_TOKEN = sgr(TXT, rgb6(2, 5, 2))
+
+C_RST_TOKEN = RST_TXT
+
+C_END = ERASE_LINE_F + RST
+
 
 def errL(*items:Any) -> None: print(*items, sep='', file=stderr)
 
