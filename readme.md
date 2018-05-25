@@ -1,6 +1,6 @@
 # Same-Same: a Git diff highlighter
 
-Same-same is a git diff highlighter like Git's [contrib/diff-highlight](https://github.com/git/git/tree/master/contrib/diff-highlight) and https://github.com/so-fancy/diff-so-fancy.
+Same-same is a git diff highlighter like Git's [contrib/diff-highlight](https://github.com/git/git/tree/master/contrib/diff-highlight) and [diff-so-fancy](https://github.com/so-fancy/diff-so-fancy).
 
 The highlighter accomplishes several things:
 * Highlights add/remove lines using background colors.
@@ -51,6 +51,18 @@ As an alternative or in addition to `core.pager`, you can set any of `pager.log`
 
 Due to recently observed slow start times using Python's `entry_points`/`console_scripts`, I am not bothering with a `setup.py` entrypoint at this time.
 
+
+# Screenshots
+
+An example diff straight from git:
+
+![Git Diff](doc/example-git-diff.png)
+
+The same diff highlighted with by same-same:
+
+![Same-same](doc/example-same-same.png)
+
+
 # Debugging
 
 If `same-same` misbehaves, please report the problem (with a repro if possible) as a GitHub issue.
@@ -58,6 +70,7 @@ If `same-same` misbehaves, please report the problem (with a repro if possible) 
 To put `same-same` in passthrough mode, set the environment variable `SAME_SAME_OFF`.
 
 To put `same-same` in debug mode (just classify each line, then print its kind and repr), set `SAME_SAME_DBG`.
+
 
 # Notes
 
