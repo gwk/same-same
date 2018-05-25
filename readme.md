@@ -72,9 +72,35 @@ To put `same-same` in passthrough mode, set the environment variable `SAME_SAME_
 To put `same-same` in debug mode (just classify each line, then print its kind and repr), set `SAME_SAME_DBG`.
 
 
+# Algorithms
+
+Same-same does two things that are interesting algorithmically: movement detection, and per-token highlighting.
+
+## Movement detection
+
+The movement detector runs first, as follows:
+* Find all unique removed lines and unique added lines, ignoring whitespace (this allows for detection even with changed indentation).
+* For each unique line that was both added and removed:
+  * Greedily expand the moved block backwards and forwards, again ignoring whitespace but also allowing non-unique lines to match.
+
+## Per-token highlighting
+
+Per-token highlighting is performed per "chunk", where a chunk is a block of consecutive removed and/or added lines. This is in contrast to git's notion of a "hunk", which also includes context lines. For each chunk:
+* Assemble a list of tokens for each side, including newline tokens.
+* Diff the lists on a token-by-token basis.
+  * Currently we use Python's builtin `difflib.SequnceMatcher` algorithm, and treat non-newline whitespace tokens as junk (a feature of `SequenceMatcher`).
+  * Anecdotally, I think that the "Patience" algorithm produces better diffs than `difflib` does, and Git's "histogram" algorithm is purported to be better still. I would love to find the time to write (or collaborate on!) a public domain implementation.
+* Iterate over the resulting diff sequence and output the sequence of tokens with highlight colors inserted.
+* Replace the text for each line with highlighted sequences.
+
+
 # Notes
 
 I learned some interesting things that may be helpful for others creating git highlighters, other git tools, and tools with color console output.
+
+## Git can do line movement detection
+
+`git diff` has a new `--color-moved[=<mode>]` option to detect line movement, and offers several modes. Same-same ignores all colors in the diff and does its own movement detection. This is partly out of simplicity, but also to allow for experimentation and improvements to the movement detection algorithm.
 
 ## Limitation of Git's interactive mode
 
