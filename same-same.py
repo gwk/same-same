@@ -189,29 +189,29 @@ def handle_file_lines(lines:List[DiffLine], path:str, interactive:bool) -> None:
         print(text)
       elif kind == 'rem':
         m = C_REM_MOVED if line.old_num in old_moved_nums else ''
-        print(f'{C_REM_LINE}{m}{text}{C_END}')
+        print(C_REM_LINE, m, text, C_END, sep='')
       elif kind == 'add':
         m = C_ADD_MOVED if line.new_num in new_moved_nums else ''
-        print(f'{C_ADD_LINE}{m}{text}{C_END}')
+        print(C_ADD_LINE, m, text, C_END, sep='')
       elif kind == 'loc':
         new_num = match['new_num']
         snippet = match['parent_snippet']
-        s = f' {C_SNIPPET}' if snippet else ''
-        print(f'{C_LOC}{path}:{new_num}:{s}{snippet}{C_END}')
+        s = ' ' + C_SNIPPET if snippet else ''
+        print(C_LOC, path, ':', new_num, ':', s, snippet, C_END, sep='')
       elif kind == 'diff':
         old_path = vscode_path(match['diff_a'])
         new_path = vscode_path(match['diff_b'])
-        msg = new_path if (old_path == new_path) else f'{old_path} -> {new_path}'
-        print(f'{C_FILE}{msg}:{C_END}')
+        msg = new_path if (old_path == new_path) else '{} -> {}'.format(old_path, new_path)
+        print(C_FILE, msg, ':', C_END, sep='')
       elif kind == 'meta':
-        print(f'{C_MODE}{path}:{RST} {line.rich_text}')
+        print(C_MODE, path, ':', RST, ' ', line.rich_text, sep='')
       elif kind in dropped_kinds:
         if interactive: # cannot drop lines, becasue interactive mode slices the diff by line counts.
-          print(f'{C_DROPPED}{line.plain_text}{RST}')
+          print(C_DROPPED, line.plain_text, RST, sep='')
       elif kind in pass_kinds:
         print(line.rich_text)
       else:
-        raise Exception(f'unhandled kind: {kind}\n{text!r}')
+        raise Exception('unhandled kind: {}\n{!r}'.format(kind, text))
 
 
 def insert_unique_line(d:Dict[str, Optional[int]], line:str, idx:int) -> None:
@@ -341,7 +341,7 @@ ERASE_LINE_F = CSI + 'K' # Sending erase line forward while background color is 
 def sgr(*codes:Any) -> str:
   'Select Graphic Rendition control sequence string.'
   code = ';'.join(str(c) for c in codes)
-  return f'{CSI}{code}m'
+  return '\x1b[{}m'.format(code)
 
 RST = sgr()
 

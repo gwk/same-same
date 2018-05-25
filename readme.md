@@ -18,7 +18,7 @@ Same-same is dedicated to the public domain under CC0: https://creativecommons.o
 
 # Requirements
 
-Same-same currently requires Python 3.6 and an `xterm-256` compatible terminal, as it generates 256-color output.
+Same-same currently requires Python 3.x and an `xterm-256` compatible terminal, as it generates 256-color output.
 
 Same-same has been tested only on macOS 10.13 and Apple Terminal.
 
