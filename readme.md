@@ -8,6 +8,8 @@ The highlighter accomplishes several things:
 * Detects moved lines and highlights them with separate (yellowish) text colors.
 * Distinguishes metadata lines, thereby decreasing visual clutter.
 * Removes leading '+'/'-'/' ' characters from hunk lines, which makes copy/paste from the terminal more convenient.
+* Reformats chunk headers to look like "dir/source.ext:line_num:", which allows editors such as VSCode to click through the source location.
+
 
 # License
 

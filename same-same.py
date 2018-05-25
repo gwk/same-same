@@ -66,9 +66,7 @@ def main() -> None:
         continue
       if kind == 'diff':
         flush_buffer()
-        path = match['diff_b']
-        if '/' not in path:
-          path = './' + path
+        path = vscode_path(match['diff_b'])
         assert path is not None
       buffer.append(DiffLine(kind, match, rich_text)) # type: ignore
     flush_buffer()
@@ -199,14 +197,14 @@ def handle_file_lines(lines:List[DiffLine], path:str, interactive:bool) -> None:
         print(f'{C_ADD_LINE}{m}{text}{C_END}')
       elif kind == 'loc':
         new_num = match['new_num']
-        hunk_header = match['hunk_header']
-        s = f'{RST} {C_HEADER}' if hunk_header else ''
-        print(f'{C_LOC}{path}:{new_num}:{s}{hunk_header}{RST}')
+        snippet = match['parent_snippet']
+        s = f' {C_SNIPPET}' if snippet else ''
+        print(f'{C_LOC}{path}:{new_num}:{s}{snippet}{C_END}')
       elif kind == 'diff':
-        old_path = match['diff_a']
-        new_path = match['diff_b']
+        old_path = vscode_path(match['diff_a'])
+        new_path = vscode_path(match['diff_b'])
         msg = new_path if (old_path == new_path) else f'{old_path} -> {new_path}'
-        print(f'{C_FILE}{msg}{ERASE_LINE_F}{RST}')
+        print(f'{C_FILE}{msg}:{C_END}')
       elif kind == 'meta':
         print(f'{C_MODE}{path}:{RST} {line.rich_text}')
       elif kind in dropped_kinds:
@@ -305,7 +303,7 @@ diff_re = r'''(?x)
 | (?P<idx>      index   )
 | (?P<old>      ---     )
 | (?P<new>      \+\+\+  )
-| (?P<loc>      @@\ -(?P<old_num>\d+)(?P<old_len>,\d+)?\ \+(?P<new_num>\d+)(?P<new_len>,\d+)?\ @@\ ?(?P<hunk_header>.*) )
+| (?P<loc>      @@\ -(?P<old_num>\d+)(?P<old_len>,\d+)?\ \+(?P<new_num>\d+)(?P<new_len>,\d+)?\ @@\ ?(?P<parent_snippet>.*) )
 | (?P<ctx>      \  (?P<ctx_text>.*) )
 | (?P<rem>      -  (?P<rem_text>.*) )
 | (?P<add>      \+ (?P<add_text>.*) )
@@ -383,10 +381,10 @@ def rgb6(r:int, g:int, b:int) -> int:
 # same-same colors.
 
 C_FILE = sgr(BG, rgb6(1, 0, 1))
-C_MODE = sgr(BG, rgb6(0, 3, 4))
+C_MODE = sgr(BG, rgb6(1, 0, 1))
+C_LOC = sgr(BG, rgb6(0, 1, 1))
 C_UNKNOWN = sgr(BG, rgb6(5, 0, 5))
-C_LOC = sgr(BG, rgb6(0, 1, 2))
-C_HEADER = sgr(TXT, gray26(17), BG, gray26(4))
+C_SNIPPET = sgr(TXT, gray26(22))
 C_DROPPED = sgr(TXT, gray26(10))
 
 C_REM_LINE = sgr(BG, rgb6(1, 0, 0))
@@ -400,6 +398,11 @@ C_RST_TOKEN = RST_TXT
 
 C_END = ERASE_LINE_F + RST
 
+
+def vscode_path(path:str) -> str:
+  'VSCode will only recognize source locations if the path contains a slash; add "./" to plain file names.'
+  if '/' in path or '<' in path or '>' in path: return path # Do not alter pseudo-names like <stdin>.
+  return './' + path
 
 def errL(*items:Any) -> None: print(*items, sep='', file=stderr)
 
