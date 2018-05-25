@@ -95,12 +95,13 @@ def handle_file_lines(lines:List[DiffLine], path:str, interactive:bool) -> None:
   chunk_idx = 0 # Counter to differentiate chunks; becomes part of the groupby key.
 
   # Accumulate source lines into structures.
-  is_prev_ctx = False
+  is_prev_add_rem = False
   for line in lines:
     match = line.match
     kind = line.kind
-    if is_prev_ctx and (kind in ('rem', 'add')): chunk_idx += 1
-    is_prev_ctx = (kind == 'ctx')
+    is_add_rem = (kind in ('rem', 'add'))
+    if not is_prev_add_rem and is_add_rem: chunk_idx += 1
+    is_prev_add_rem = is_add_rem
     if kind == 'ctx':
       line.text = match['ctx_text']
     elif kind == 'rem':
