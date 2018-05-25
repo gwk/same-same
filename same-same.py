@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Dedicated to the public domain under CC0: https://creativecommons.org/publicdomain/zero/1.0/.
 
 import re
 from argparse import ArgumentParser
@@ -79,9 +80,10 @@ def handle_file_lines(lines:List[DiffLine], path:str, interactive:bool) -> None:
   first = lines[0]
   kind = first.kind
   skip = False
+
+  # Detect if we should skip these lines.
   if kind not in ('diff', 'loc'): skip = True
   elif graph_pat.match(first.plain_text).end(): skip = True # type: ignore
-
   if skip:
     for line in lines: print(line.rich_text)
     return
@@ -92,10 +94,9 @@ def handle_file_lines(lines:List[DiffLine], path:str, interactive:bool) -> None:
   new_lines:Dict[int, DiffLine] = {} # ".
   old_uniques:Dict[str, Optional[int]] = {} # Maps unique line bodies to line numbers.
   new_uniques:Dict[str, Optional[int]] = {} # ".
-  #moved_pairs = {} # new to old indices.
   old_num = 0 # 1-indexed source line number.
   new_num = 0 # ".
-  chunk_idx = 0
+  chunk_idx = 0 # Counter to differentiate chunks; becomes part of the groupby key.
 
   # Accumulate source lines into structures.
   is_prev_ctx = False
@@ -166,18 +167,22 @@ def handle_file_lines(lines:List[DiffLine], path:str, interactive:bool) -> None:
     new_moved_nums.update(range(p_n, e_n))
 
   # Break lines into rem/add chunks.
+  # While a "hunk" is a series of (possibly many) ctx/rem/add lines provided by git diff,
+  # a "chunk" is either a contiguous block of rem/add lines, or else any other single line.
+  # This approach simplifies the token diffing process so that it is a reasonably
+  # straightforward comparison of a rem block to an add block.
 
   def chunk_key(line:DiffLine) -> Tuple[int, bool]:
     return (line.chunk_idx, (line.old_num in old_moved_nums or line.new_num in new_moved_nums))
 
   for ((chunk_idx, is_moved), _chunk) in groupby(lines, key=chunk_key):
-    # Within a chunk, we can reorder rem/add lines.
-    chunk = list(_chunk)
+    chunk = list(_chunk) # We iterate over the sequence several times.
     if chunk_idx and not is_moved: # Chunk should be diffed by tokens.
-      # We must ensure that the same number of lines is output.
+      # We must ensure that the same number of lines is output, at least for `-interactive` mode.
+      # Currently, we do not reorder lines at all, but that is an option for the future.
       rem_lines = [l for l in chunk if l.old_num]
       add_lines = [l for l in chunk if l.new_num]
-      add_intraline_diffs(rem_lines, add_lines)
+      add_token_diffs(rem_lines, add_lines)
 
     # Print lines.
     for line in chunk:
@@ -214,36 +219,56 @@ def handle_file_lines(lines:List[DiffLine], path:str, interactive:bool) -> None:
 
 
 def insert_unique_line(d:Dict[str, Optional[int]], line:str, idx:int) -> None:
+  'For the purpose of movement detection, lines are tested for uniqueness after stripping leading and trailing whitespace.'
   body = line.strip()
   if body in d: d[body] = None
   else: d[body] = idx
 
 
-def add_intraline_diffs(rem_lines:List[DiffLine], add_lines:List[DiffLine]) -> None:
+def add_token_diffs(rem_lines:List[DiffLine], add_lines:List[DiffLine]) -> None:
+  'Rewrite DiffLine.text values to include per-token diff highlighting.'
+  # Get lists of tokens for the entire chunk.
   r_tokens = tokenize_difflines(rem_lines)
   a_tokens = tokenize_difflines(add_lines)
-  isjunk = lambda s: s.isspace() and s != '\n'
-  m = SequenceMatcher(isjunk=isjunk, a=r_tokens, b=a_tokens, autojunk=True)
-  r_line_idx = 0
-  a_line_idx = 0
-  r_d = 0 # diff fragment index.
-  a_d = 0
-  r_frags:List[List[str]] = [[] for _ in rem_lines]
+  m = SequenceMatcher(isjunk=is_token_junk, a=r_tokens, b=a_tokens, autojunk=True)
+  r_frags:List[List[str]] = [[] for _ in rem_lines] # Accumulate highlighted tokens.
   a_frags:List[List[str]] = [[] for _ in add_lines]
-  # TODO: r_bg_on, a_bg_on toggles to reduce emission of BG sequences.
-  blocks = m.get_matching_blocks() # last block is sentinel: (len(a), len(b), 0).
-  #if len(blocks) == 1: return # no matches; don't highlight.
+  r_line_idx = 0 # Step through the accumulators.
+  a_line_idx = 0
+  r_d = 0 # Token index of previous/next diff.
+  a_d = 0
+  # TODO: r_lit, a_lit flags could slightly reduce emission of color sequences.
+  blocks = m.get_matching_blocks() # last block is the sentinel: (len(a), len(b), 0).
   for r_p, a_p, l in m.get_matching_blocks():
+    # Highlight the differing tokens.
     r_line_idx = append_frags(r_frags, r_tokens, r_line_idx, r_d, r_p, C_REM_TOKEN)
     a_line_idx = append_frags(a_frags, a_tokens, a_line_idx, a_d, a_p, C_ADD_TOKEN)
     r_d = r_p+l # update to end of match / beginning of next diff.
     a_d = a_p+l
+    # Do not highlight the matching tokens.
     r_line_idx = append_frags(r_frags, r_tokens, r_line_idx, r_p, r_d, C_RST_TOKEN)
     a_line_idx = append_frags(a_frags, a_tokens, a_line_idx, a_p, a_d, C_RST_TOKEN)
   for rem_line, frags in zip(rem_lines, r_frags):
     rem_line.text = ''.join(frags)
   for add_line, frags in zip(add_lines, a_frags):
     add_line.text = ''.join(frags)
+
+
+def tokenize_difflines(lines:List[DiffLine]) -> List[str]:
+  'Convert the list of line texts into a single list of tokens, including newline tokens.'
+  tokens:List[str] = []
+  for i, line in enumerate(lines):
+    if i: tokens.append('\n')
+    tokens.extend(m[0] for m in token_pat.finditer(line.text))
+  return tokens
+
+
+def is_token_junk(token:str) -> bool:
+  '''
+  Treate newlines as tokens, but all other whitespace as junk.
+  This forces the differ to respect line breaks but not get distracted aligning to whitespace.
+  '''
+  return token.isspace() and token != '\n'
 
 
 def append_frags(frags:List[List[str]], tokens:List[str], line_idx:int, pos:int, end:int, highlight:str) -> int:
@@ -255,14 +280,6 @@ def append_frags(frags:List[List[str]], tokens:List[str], line_idx:int, pos:int,
       f.append(highlight)
       f.append(frag)
   return line_idx
-
-
-def tokenize_difflines(lines:List[DiffLine]) -> List[str]:
-  tokens:List[str] = []
-  for i, line in enumerate(lines):
-    if i: tokens.append('\n')
-    tokens.extend(m[0] for m in token_pat.finditer(line.text))
-  return tokens
 
 
 dropped_kinds = {
