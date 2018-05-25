@@ -9,19 +9,17 @@ from os import environ
 from sys import stderr, stdout
 from typing import *
 from typing import Match
-from dataclasses import dataclass # type: ignore
 
 
-
-@dataclass
 class DiffLine:
-  kind: str
-  match: Match
-  rich_text: str
-  old_num: int = 0 # 1-indexed.
-  new_num: int = 0 # ".
-  chunk_idx: int = 0 # Positive indicates rem/add chunk.
-  text: str = ''
+  def __init__(self, kind:str, match:Match, rich_text:str) -> None:
+    self.kind = kind # The name from `diff_re` named capture groups.
+    self.match = match
+    self.rich_text = rich_text # Original colorized text from git.
+    self.old_num = 0 # 1-indexed.
+    self.new_num = 0 # ".
+    self.chunk_idx = 0 # Positive indicates rem/add chunk.
+    self.text = '' # Final text.
 
   @property
   def plain_text(self) -> str:
@@ -68,7 +66,7 @@ def main() -> None:
         flush_buffer()
         path = vscode_path(match['diff_b'])
         assert path is not None
-      buffer.append(DiffLine(kind, match, rich_text)) # type: ignore
+      buffer.append(DiffLine(kind, match, rich_text))
     flush_buffer()
   except BrokenPipeError:
     stderr.close() # Prevents warning message.
