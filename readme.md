@@ -1,4 +1,4 @@
-# Same-Same: a Git diff highlighter
+# Same-same: a Git diff highlighter
 
 Same-same is a git diff highlighter like Git's [contrib/diff-highlight](https://github.com/git/git/tree/master/contrib/diff-highlight) and [diff-so-fancy](https://github.com/so-fancy/diff-so-fancy).
 
