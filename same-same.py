@@ -346,9 +346,9 @@ def sgr(*codes:Any) -> str:
 
 RST = sgr()
 
-RST_BOLD, RST_ULINE, RST_BLINK, RST_INVERT, RST_TXT, RST_BG = (sgr(i) for i in (22, 24, 25, 27, 39, 49))
+RST_BOLD, RST_ULINE, RST_BLINK, RST_INVERT, RST_TXT, RST_BG = (22, 24, 25, 27, 39, 49)
 
-BOLD, ULINE, BLINK, INVERT = (sgr(i) for i in (1, 4, 5, 7))
+BOLD, ULINE, BLINK, INVERT = (1, 4, 5, 7)
 
 
 # xterm-256 sequence initiators; these should be followed by a single color index.
@@ -390,10 +390,10 @@ C_REM_LINE = sgr(BG, rgb6(1, 0, 0))
 C_ADD_LINE = sgr(BG, rgb6(0, 1, 0))
 C_REM_MOVED = sgr(TXT, rgb6(4, 2, 0))
 C_ADD_MOVED = sgr(TXT, rgb6(2, 4, 0))
-C_REM_TOKEN = sgr(TXT, rgb6(5, 2, 2))
-C_ADD_TOKEN = sgr(TXT, rgb6(2, 5, 2))
+C_REM_TOKEN = sgr(TXT, rgb6(5, 2, 3), BOLD)
+C_ADD_TOKEN = sgr(TXT, rgb6(2, 5, 3), BOLD)
 
-C_RST_TOKEN = RST_TXT
+C_RST_TOKEN = sgr(RST_TXT, RST_BOLD)
 
 C_END = ERASE_LINE_F + RST
 
