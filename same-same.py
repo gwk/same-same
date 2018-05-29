@@ -381,7 +381,7 @@ def rgb6(r:int, g:int, b:int) -> int:
 
 C_FILE = sgr(BG, rgb6(1, 0, 1))
 C_MODE = sgr(BG, rgb6(1, 0, 1))
-C_LOC = sgr(BG, rgb6(0, 1, 1))
+C_LOC = sgr(BG, rgb6(0, 1, 2))
 C_UNKNOWN = sgr(BG, rgb6(5, 0, 5))
 C_SNIPPET = sgr(TXT, gray26(22))
 C_DROPPED = sgr(TXT, gray26(10))
