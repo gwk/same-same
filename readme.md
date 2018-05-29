@@ -9,7 +9,7 @@ The highlighter accomplishes several things:
 * Distinguishes file and hunk metadata lines with background colors.
 * Removes leading '+'/'-'/' ' characters from hunk lines, which makes copy/paste from the terminal more convenient.
 * Reformats chunk headers to look like "dir/source.ext:line_num:", which allows editors such as VSCode to click through the source location.
-* Rewrites invisible characters in the ASCII and Latin-1 Unicode blocks to display as escape codes, and highlights them using color inversion.
+* Rewrites invisible characters in the ASCII and Latin-1 Unicode blocks to display as escape codes, and highlights them using color inversion. Note that this includes the tab character, which is great if you use two-space code indentation like I do, but not so great for other settings. If someone wants to make this configurable for other tab widths, please get in touch!
 
 
 # License
@@ -55,13 +55,9 @@ Due to recently observed slow start times using Python's `entry_points`/`console
 
 # Screenshots
 
-An example diff straight from git:
+An example diff: git colors on the left, same-same on the right:
 
-![Git Diff](doc/example-git-diff.png)
-
-The same diff highlighted with by same-same:
-
-![Same-same](doc/example-same-same.png)
+<img src="doc/example-git-diff.png" width="40%" /> <img src="doc/example-same-same.png" width="40%" />
 
 
 # Debugging
