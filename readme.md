@@ -6,9 +6,10 @@ The highlighter accomplishes several things:
 * Highlights add/remove lines using background colors.
 * Tokenizes changed blocks and highlights per-token changes using text colors.
 * Detects moved lines and highlights them with separate (yellowish) text colors.
-* Distinguishes metadata lines, thereby decreasing visual clutter.
+* Distinguishes file and hunk metadata lines with background colors.
 * Removes leading '+'/'-'/' ' characters from hunk lines, which makes copy/paste from the terminal more convenient.
 * Reformats chunk headers to look like "dir/source.ext:line_num:", which allows editors such as VSCode to click through the source location.
+* Rewrites invisible characters in the ASCII and Latin-1 Unicode blocks to display as escape codes, and highlights them using color inversion.
 
 
 # License

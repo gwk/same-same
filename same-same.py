@@ -4,7 +4,7 @@
 import re
 from argparse import ArgumentParser
 from difflib import SequenceMatcher
-from itertools import groupby
+from itertools import chain, groupby
 from os import environ
 from sys import stderr, stdout
 from typing import *
@@ -18,8 +18,9 @@ class DiffLine:
     self.rich_text = rich_text # Original colorized text from git.
     self.old_num = 0 # 1-indexed.
     self.new_num = 0 # ".
-    self.chunk_idx = 0 # Positive indicates rem/add chunk.
-    self.text = '' # Final text.
+    self.chunk_idx = 0 # Positive for rem/add.
+    self.is_src = False # True for ctx/rem/add.
+    self.text = '' # Final text for ctx/rem/add.
 
   @property
   def plain_text(self) -> str:
@@ -103,12 +104,15 @@ def handle_file_lines(lines:List[DiffLine], path:str, interactive:bool) -> None:
     if not is_prev_add_rem and is_add_rem: chunk_idx += 1
     is_prev_add_rem = is_add_rem
     if kind == 'ctx':
+      line.is_src = True
       line.text = match['ctx_text']
     elif kind == 'rem':
+      line.is_src = True
       line.text = match['rem_text']
       line.chunk_idx = chunk_idx
       insert_unique_line(old_uniques, line.text, old_num)
     elif kind == 'add':
+      line.is_src = True
       line.text = match['add_text']
       line.chunk_idx = chunk_idx
       insert_unique_line(new_uniques, line.text, new_num)
@@ -170,9 +174,9 @@ def handle_file_lines(lines:List[DiffLine], path:str, interactive:bool) -> None:
   # straightforward comparison of a rem block to an add block.
 
   def chunk_key(line:DiffLine) -> Tuple[int, bool]:
-    return (line.chunk_idx, (line.old_num in old_moved_nums or line.new_num in new_moved_nums))
+    return (line.is_src, line.chunk_idx, (line.old_num in old_moved_nums or line.new_num in new_moved_nums))
 
-  for ((chunk_idx, is_moved), _chunk) in groupby(lines, key=chunk_key):
+  for ((is_src, chunk_idx, is_moved), _chunk) in groupby(lines, key=chunk_key):
     chunk = list(_chunk) # We iterate over the sequence several times.
     if chunk_idx and not is_moved: # Chunk should be diffed by tokens.
       # We must ensure that the same number of lines is output, at least for `-interactive` mode.
@@ -180,6 +184,9 @@ def handle_file_lines(lines:List[DiffLine], path:str, interactive:bool) -> None:
       rem_lines = [l for l in chunk if l.old_num]
       add_lines = [l for l in chunk if l.new_num]
       add_token_diffs(rem_lines, add_lines)
+    elif is_src: # ctx or moved.
+      for l in chunk:
+        l.text = highlight_strange_chars(l.text)
 
     # Print lines.
     for line in chunk:
@@ -263,7 +270,7 @@ def tokenize_difflines(lines:List[DiffLine]) -> List[str]:
 def is_token_junk(token:str) -> bool:
   '''
   Treate newlines as tokens, but all other whitespace as junk.
-  This forces the differ to respect line breaks but not get distracted aligning to whitespace.
+  This forces the diff algorithm to respect line breaks but not get distracted aligning to whitespace.
   '''
   return token.isspace() and token != '\n'
 
@@ -273,10 +280,16 @@ def append_frags(frags:List[List[str]], tokens:List[str], line_idx:int, pos:int,
     if frag == '\n':
       line_idx += 1
     else:
-      f = frags[line_idx]
-      f.append(highlight)
-      f.append(frag)
+      line_frags = frags[line_idx]
+      line_frags.append(highlight)
+      line_frags.append(highlight_strange_chars(frag))
   return line_idx
+
+
+def highlight_strange_chars(string:str) -> str:
+  return strange_char_pat.sub(
+    lambda m: '{}{}{}'.format(C_STRANGE, m[0].translate(strange_char_trans_table), C_RST_STRANGE),
+    string)
 
 
 dropped_kinds = {
@@ -290,7 +303,7 @@ pass_kinds = {
 
 sgr_pat = re.compile(r'\x1B\[[0-9;]*m')
 
-graph_pat = re.compile(r'(?x) [\ \* \| \\ /]*')
+graph_pat = re.compile(r'(?x) [ /\*\|\\]*') # space is treated as literal inside of brackets, even in extended mode.
 
 diff_re = r'''(?x)
 (?:
@@ -325,13 +338,44 @@ diff_pat = re.compile(diff_re)
 
 
 token_re = r'''(?x)
-  \w[\w\d]* # symbol token.
-| \d+ # number token.
-| \s+ # tokenize whitespace together to reduce sequence length; treated as junk.
-| . # any single character.
+  \w[\w\d]* # Symbol token.
+| \d+ # Number token.
+| \ + # Spaces; distinct from other whitespace.
+| \t+ # Tabs; distinct from other whitespace.
+| \s+ # Other whitespace.
+| . # Any other single character; newlines are never present so DOTALL is irrelevant.
 '''
 
 token_pat = re.compile(token_re)
+
+# Unicode ranges for strange characters:
+# C0:   \x00 - \x1F
+# \n:   \x0A
+# C0 !\n: [ \x00-\x09 \x0B-\x1F ]
+# SP:   \x20
+# DEL:  \x7F
+# C1:   \x80 - \x9F
+# NBSP: \xA0 (nonbreaking space)
+# SHY:  \xAD (soft hyphen)
+strange_char_re = r'(?x) [\x00-\x09\x0B-\x1F\x7F\x80-\x9F\xA0\xAD]+'
+strange_char_pat = re.compile(strange_char_re)
+assert not strange_char_pat.match(' ')
+
+strange_char_ords = chain(range(0, 0x09+1), range(0x0B, 0x1F+1), range(0x7F, 0x7F+1),
+  range(0x80, 0x9F+1), range(0xA0, 0xA0+1), range(0xAD, 0xAD+1))
+assert ord(' ') not in strange_char_ords
+strange_char_names = { i : '\\x{:02x}'.format(i) for i in strange_char_ords }
+strange_char_names.update({
+  '\0' : '\\0',
+  '\a' : '\\a',
+  '\b' : '\\b',
+  '\f' : '\\f',
+  '\r' : '\\r',
+  '\t' : '\\t',
+  '\v' : '\\v',
+})
+
+strange_char_trans_table = str.maketrans(strange_char_names)
 
 
 # ANSI control sequence indicator.
@@ -394,6 +438,9 @@ C_REM_TOKEN = sgr(TXT, rgb6(5, 2, 3), BOLD)
 C_ADD_TOKEN = sgr(TXT, rgb6(2, 5, 3), BOLD)
 
 C_RST_TOKEN = sgr(RST_TXT, RST_BOLD)
+
+C_STRANGE = sgr(INVERT)
+C_RST_STRANGE = sgr(RST_INVERT)
 
 C_END = ERASE_LINE_F + RST
 
