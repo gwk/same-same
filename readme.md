@@ -11,6 +11,10 @@ The highlighter accomplishes several things:
 * Reformats chunk headers to look like "dir/source.ext:line_num:", which allows editors such as VSCode to click through the source location.
 * Rewrites invisible characters in the ASCII and Latin-1 Unicode blocks to display as escape codes, and highlights them using color inversion. Note that this includes the tab character, which is great if you use two-space code indentation like I do, but not so great for other settings. If someone wants to make this configurable for other tab widths, please get in touch!
 
+An example diff: git's colored output on the left, and highlighted by Same-same on the right:
+
+<img src="doc/example-git-diff.png" width="40%" /> <img src="doc/example-same-same.png" width="40%" />
+
 
 # License
 
@@ -49,15 +53,6 @@ Or edit your `~/.gitconfig` or project `.gitconfig` by hand:
       diffFilter = same-same -interactive | LESSANSIENDCHARS=mK less --RAW-CONTROL-CHARS
 
 As an alternative or in addition to `core.pager`, you can set any of `pager.log`, `pager.show`, and `pager.diff` to use different highlighter/pager combinations for the various git commands.
-
-Due to recently observed slow start times using Python's `entry_points`/`console_scripts`, I am not bothering with a `setup.py` entrypoint at this time.
-
-
-# Screenshots
-
-An example diff: git colors on the left, same-same on the right:
-
-<img src="doc/example-git-diff.png" width="40%" /> <img src="doc/example-same-same.png" width="40%" />
 
 
 # Debugging
