@@ -13,7 +13,7 @@ from typing import Match
 
 class DiffLine:
   def __init__(self, kind:str, match:Match, rich_text:str) -> None:
-    self.kind = kind # The name from `diff_re` named capture groups.
+    self.kind = kind # The name from `diff_pat` named capture groups.
     self.match = match
     self.rich_text = rich_text # Original colorized text from git.
     self.old_num = 0 # 1-indexed.
@@ -305,7 +305,7 @@ sgr_pat = re.compile(r'\x1B\[[0-9;]*m')
 
 graph_pat = re.compile(r'(?x) [ /\*\|\\]*') # space is treated as literal inside of brackets, even in extended mode.
 
-diff_re = r'''(?x)
+diff_pat = re.compile(r'''(?x)
 (?:
   (?P<empty> $)
 | (?P<commit>   commit\ [0-9a-z]{40})
@@ -332,21 +332,18 @@ diff_re = r'''(?x)
   | dissimilarity\ index ) )
 | (?P<other> .* )
 )
-'''
-
-diff_pat = re.compile(diff_re)
+''')
 
 
-token_re = r'''(?x)
+token_pat = re.compile(r'''(?x)
   \w[\w\d]* # Symbol token.
 | \d+ # Number token.
 | \ + # Spaces; distinct from other whitespace.
 | \t+ # Tabs; distinct from other whitespace.
 | \s+ # Other whitespace.
 | . # Any other single character; newlines are never present so DOTALL is irrelevant.
-'''
+''')
 
-token_pat = re.compile(token_re)
 
 # Unicode ranges for strange characters:
 # C0:   \x00 - \x1F
