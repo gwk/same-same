@@ -44,12 +44,11 @@ def main() -> None:
   dbg = ('SAME_SAME_DBG' in environ)
 
   buffer:List[DiffLine] = []
-  path = '<PATH>'
 
   def flush_buffer() -> None:
     nonlocal buffer
     if buffer:
-      handle_file_lines(buffer, path=path, interactive=args.interactive)
+      handle_file_lines(buffer, interactive=args.interactive)
       buffer = []
 
   try:
@@ -65,15 +64,13 @@ def main() -> None:
         continue
       if kind == 'diff':
         flush_buffer()
-        path = vscode_path(match['diff_b'])
-        assert path is not None
       buffer.append(DiffLine(kind, match, rich_text))
     flush_buffer()
   except BrokenPipeError:
     stderr.close() # Prevents warning message.
 
 
-def handle_file_lines(lines:List[DiffLine], path:str, interactive:bool) -> None:
+def handle_file_lines(lines:List[DiffLine], interactive:bool) -> None:
   first = lines[0]
   kind = first.kind
   skip = False
@@ -96,6 +93,8 @@ def handle_file_lines(lines:List[DiffLine], path:str, interactive:bool) -> None:
   chunk_idx = 0 # Counter to differentiate chunks; becomes part of the groupby key.
 
   # Accumulate source lines into structures.
+  old_path = '<OLD_PATH>'
+  new_path = '<NEW_PATH>'
   is_prev_add_rem = False
   for line in lines:
     match = line.match
@@ -138,6 +137,8 @@ def handle_file_lines(lines:List[DiffLine], path:str, interactive:bool) -> None:
       if n > 0:
         assert n > new_num
         new_num = n
+    elif kind == 'old': old_path = vscode_path(match['old_path'].rstrip('\t'))
+    elif kind == 'new': new_path = vscode_path(match['new_path'].rstrip('\t')) # Not sure why this trailing tab appears.
 
   # Detect moved lines.
 
@@ -203,14 +204,12 @@ def handle_file_lines(lines:List[DiffLine], path:str, interactive:bool) -> None:
         new_num = match['new_num']
         snippet = match['parent_snippet']
         s = ' ' + C_SNIPPET if snippet else ''
-        print(C_LOC, path, ':', new_num, ':', s, snippet, C_END, sep='')
+        print(C_LOC, new_path, ':', new_num, ':', s, snippet, C_END, sep='')
       elif kind == 'diff':
-        old_path = vscode_path(match['diff_a'])
-        new_path = vscode_path(match['diff_b'])
         msg = new_path if (old_path == new_path) else '{} -> {}'.format(old_path, new_path)
         print(C_FILE, msg, ':', C_END, sep='')
       elif kind == 'meta':
-        print(C_MODE, path, ':', RST, ' ', line.rich_text, sep='')
+        print(C_MODE, new_path, ':', RST, ' ', line.rich_text, sep='')
       elif kind in dropped_kinds:
         if interactive: # cannot drop lines, becasue interactive mode slices the diff by line counts.
           print(C_DROPPED, line.plain_text, RST, sep='')
@@ -306,13 +305,13 @@ graph_pat = re.compile(r'(?x) [ /\*\|\\]*') # space is treated as literal inside
 diff_pat = re.compile(r'''(?x)
 (?:
   (?P<empty> $)
-| (?P<commit>   commit\ [0-9a-z]{40})
+| (?P<commit>   commit\ [0-9a-z]{40} )
 | (?P<author>   Author: )
 | (?P<date>     Date:   )
-| (?P<diff>     diff\ --git\ (a/)?(?P<diff_a>.+)\ (b/)?(?P<diff_b>.+) ) # note that we eat a/ and b/ prefixes, even when using `--no-index`.
+| (?P<diff>     diff\ --git )
 | (?P<idx>      index   )
-| (?P<old>      ---     )
-| (?P<new>      \+\+\+  )
+| (?P<old>      ---     \ (?P<old_path>.+) )
+| (?P<new>      \+\+\+  \ (?P<new_path>.+) )
 | (?P<loc>      @@\ -(?P<old_num>\d+)(?P<old_len>,\d+)?\ \+(?P<new_num>\d+)(?P<new_len>,\d+)?\ @@\ ?(?P<parent_snippet>.*) )
 | (?P<ctx>      \  (?P<ctx_text>.*) )
 | (?P<rem>      -  (?P<rem_text>.*) )
