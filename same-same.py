@@ -103,19 +103,32 @@ def handle_file_lines(lines:List[DiffLine], path:str, interactive:bool) -> None:
     is_add_rem = (kind in ('rem', 'add'))
     if not is_prev_add_rem and is_add_rem: chunk_idx += 1
     is_prev_add_rem = is_add_rem
-    if kind == 'ctx':
+    if kind in ('ctx', 'rem', 'add'):
       line.is_src = True
-      line.text = match['ctx_text']
-    elif kind == 'rem':
-      line.is_src = True
-      line.text = match['rem_text']
-      line.chunk_idx = chunk_idx
-      insert_unique_line(old_uniques, line.text, old_num)
-    elif kind == 'add':
-      line.is_src = True
-      line.text = match['add_text']
-      line.chunk_idx = chunk_idx
-      insert_unique_line(new_uniques, line.text, new_num)
+      if kind == 'ctx':
+        line.text = match['ctx_text']
+      elif kind == 'rem':
+        line.text = match['rem_text']
+        line.chunk_idx = chunk_idx
+        insert_unique_line(old_uniques, line.text, old_num)
+      elif kind == 'add':
+        line.text = match['add_text']
+        line.chunk_idx = chunk_idx
+        insert_unique_line(new_uniques, line.text, new_num)
+      if kind in ('ctx', 'rem'):
+        assert old_num not in old_lines
+        assert old_num not in old_ctx_nums
+        line.old_num = old_num
+        old_lines[old_num] = line
+        old_ctx_nums.add(old_num)
+        old_num += 1
+      if kind in ('ctx', 'add'):
+        assert new_num not in new_lines
+        assert new_num not in new_ctx_nums
+        line.new_num = new_num
+        new_lines[new_num] = line
+        new_ctx_nums.add(new_num)
+        new_num += 1
     elif kind == 'loc':
       o = int(match['old_num'])
       if o > 0:
@@ -125,21 +138,6 @@ def handle_file_lines(lines:List[DiffLine], path:str, interactive:bool) -> None:
       if n > 0:
         assert n > new_num
         new_num = n
-      continue
-    if kind in ('ctx', 'rem'):
-      assert old_num not in old_lines
-      assert old_num not in old_ctx_nums
-      line.old_num = old_num
-      old_lines[old_num] = line
-      old_ctx_nums.add(old_num)
-      old_num += 1
-    if kind in ('ctx', 'add'):
-      assert new_num not in new_lines
-      assert new_num not in new_ctx_nums
-      line.new_num = new_num
-      new_lines[new_num] = line
-      new_ctx_nums.add(new_num)
-      new_num += 1
 
   # Detect moved lines.
 
